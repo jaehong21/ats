@@ -1,0 +1,14 @@
+# misc
+.DS_Store
+.vscode
+.idea
+
+# build output
+/target
+
+# AI agent prompts
+!.*
+.cursor/
+CLAUDE.md
+GEMINI.md
+AGENTS.md

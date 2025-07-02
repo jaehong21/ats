@@ -1,0 +1,26 @@
+[package]
+name = "ats"
+version = "0.1.0"
+edition = "2024"
+description = "Modern terminal UI written in Rust to interact with AWS resources"
+license = "MIT"
+
+[dependencies]
+# Terminal UI
+crossterm = "0.29.0"
+ratatui = "0.29.0"
+
+# Async runtime
+tokio = { version = "1.45", features = ["full"] }
+
+# AWS SDK - ECR only for now
+aws-config = "1.8"
+aws-sdk-ecr = "1.82"
+
+# Serialization and error handling
+serde = { version = "1.0", features = ["derive"] }
+anyhow = "1.0"
+
+# Utilities
+chrono = { version = "0.4", features = ["serde"] }
+copypasta = "0.10.2"
