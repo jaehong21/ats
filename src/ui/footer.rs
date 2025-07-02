@@ -5,6 +5,7 @@ use ratatui::{
     text::{Line, Span},
     widgets::{Block, Borders, Paragraph},
 };
+use std::time::Duration;
 
 use crate::app::{App, InputMode};
 
@@ -18,13 +19,22 @@ pub fn render_footer(f: &mut Frame, area: Rect, app: &App) {
         .split(area);
 
     // Left side - Status
-    let status_text = if app.loading { "Loading..." } else { "Ready" };
+    let mut status_spans = Vec::new();
 
-    let status = Paragraph::new(Line::from(vec![Span::styled(
-        status_text,
-        Style::default().fg(Color::Green),
-    )]))
-    .block(Block::default().borders(Borders::NONE));
+    // Main status
+    let status_text = if app.loading { "Loading..." } else { "Ready" };
+    status_spans.push(Span::styled(status_text, Style::default().fg(Color::Green)));
+
+    // Copy status (if present and not expired)
+    if let Some((copy_msg, copy_time)) = &app.copy_status {
+        if copy_time.elapsed() < Duration::from_secs(2) {
+            status_spans.push(Span::raw(" | "));
+            status_spans.push(Span::styled(copy_msg, Style::default().fg(Color::Green)));
+        }
+    }
+
+    let status =
+        Paragraph::new(Line::from(status_spans)).block(Block::default().borders(Borders::NONE));
     f.render_widget(status, chunks[0]);
 
     // Right side - Hotkeys

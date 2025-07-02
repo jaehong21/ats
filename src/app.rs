@@ -31,6 +31,7 @@ pub struct App {
     pub view_stack: Vec<CurrentView>,
     pub loading: bool,
     pub error_message: Option<String>,
+    pub copy_status: Option<(String, Instant)>, // (message, created_at timestamp)
 }
 
 impl Default for App {
@@ -49,6 +50,7 @@ impl Default for App {
             view_stack: Vec::new(),
             loading: false,
             error_message: None,
+            copy_status: None,
         }
     }
 }
@@ -183,6 +185,15 @@ impl App {
         self.loading = true;
         self.last_refresh = Instant::now();
         self.error_message = None;
+        self.clear_expired_copy_status();
+    }
+
+    pub fn clear_expired_copy_status(&mut self) {
+        if let Some((_, copy_time)) = &self.copy_status {
+            if copy_time.elapsed() >= std::time::Duration::from_secs(3) {
+                self.copy_status = None;
+            }
+        }
     }
 
     pub fn filtered_repositories(&self) -> Vec<&crate::services::ecr::ECRRepository> {
@@ -286,18 +297,20 @@ impl App {
         }
     }
 
-    fn copy_selected_to_clipboard(&self) {
+    fn copy_selected_to_clipboard(&mut self) {
         let mut ctx = match ClipboardContext::new() {
             Ok(ctx) => ctx,
             Err(_) => return, // Silently fail if clipboard is not available
         };
 
-        let content = match self.current_view {
+        let (content, display_name) = match self.current_view {
             CurrentView::ECR => {
                 let repositories = self.filtered_repositories();
                 if self.selected_index < repositories.len() {
                     let repo = &repositories[self.selected_index];
-                    format!("{} for {}", repo.repository_uri, repo.repository_name)
+                    let content = format!("{} for {}", repo.repository_uri, repo.repository_name);
+                    let display_name = repo.repository_name.clone();
+                    (content, display_name)
                 } else {
                     return;
                 }
@@ -309,7 +322,7 @@ impl App {
                     if let (Some(repo_name), Some(tag)) =
                         (&self.current_repository, &image.image_tag)
                     {
-                        format!(
+                        let content = format!(
                             "{}:{}",
                             self.ecr_repositories
                                 .iter()
@@ -320,9 +333,11 @@ impl App {
                                     repo_name
                                 )),
                             tag
-                        )
+                        );
+                        let display_name = format!("{}:{}", repo_name, tag);
+                        (content, display_name)
                     } else if let Some(repo_name) = &self.current_repository {
-                        format!(
+                        let content = format!(
                             "{}@{}",
                             self.ecr_repositories
                                 .iter()
@@ -333,7 +348,14 @@ impl App {
                                     repo_name
                                 )),
                             image.image_digest
-                        )
+                        );
+                        let short_digest = if image.image_digest.len() > 36 {
+                            format!("{}...", &image.image_digest[..36])
+                        } else {
+                            image.image_digest.clone()
+                        };
+                        let display_name = format!("{}@{}", repo_name, short_digest);
+                        (content, display_name)
                     } else {
                         return;
                     }
@@ -343,6 +365,8 @@ impl App {
             }
         };
 
-        let _ = ctx.set_contents(content);
+        if ctx.set_contents(content).is_ok() {
+            self.copy_status = Some((format!("✓ {} copied", display_name), Instant::now()));
+        }
     }
 }

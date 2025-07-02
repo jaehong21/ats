@@ -2,9 +2,9 @@ use anyhow::Result;
 use crossterm::{
     event::{self, DisableMouseCapture, EnableMouseCapture, Event},
     execute,
-    terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
+    terminal::{EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode},
 };
-use ratatui::{backend::CrosstermBackend, Terminal};
+use ratatui::{Terminal, backend::CrosstermBackend};
 use std::{
     io,
     time::{Duration, Instant},
@@ -65,6 +65,9 @@ async fn main() -> Result<()> {
             }
             last_tick = Instant::now();
         }
+
+        // Clear expired copy status
+        app.clear_expired_copy_status();
 
         // Draw UI
         terminal.draw(|f| render_layout(f, &app))?;
