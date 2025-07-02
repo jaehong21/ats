@@ -1,7 +1,7 @@
 use anyhow::Result;
 use aws_sdk_ecr::{
-    types::{ImageDetail, Repository},
     Client,
+    types::{ImageDetail, Repository},
 };
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
