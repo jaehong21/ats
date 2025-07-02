@@ -32,6 +32,8 @@ pub struct App {
     pub loading: bool,
     pub error_message: Option<String>,
     pub copy_status: Option<(String, Instant)>, // (message, created_at timestamp)
+    pub aws_profile: String,
+    pub aws_region: String,
 }
 
 impl Default for App {
@@ -51,6 +53,8 @@ impl Default for App {
             loading: false,
             error_message: None,
             copy_status: None,
+            aws_profile: "default".to_string(),
+            aws_region: "us-east-1".to_string(),
         }
     }
 }
@@ -58,6 +62,13 @@ impl Default for App {
 impl App {
     pub fn new() -> Self {
         Self::default()
+    }
+
+    pub fn new_with_aws_config(profile: String, region: String) -> Self {
+        let mut app = Self::default();
+        app.aws_profile = profile;
+        app.aws_region = region;
+        app
     }
 
     pub fn handle_key_event(&mut self, key: KeyEvent) -> Result<()> {

@@ -1,4 +1,5 @@
 use anyhow::Result;
+use clap::Parser;
 use crossterm::{
     event::{self, DisableMouseCapture, EnableMouseCapture, Event},
     execute,
@@ -20,8 +21,22 @@ use app::{App, CurrentView};
 use services::ecr::ECRService;
 use ui::layout::render_layout;
 
+#[derive(Parser)]
+#[command(name = "ats")]
+#[command(about = "AWS Terminal Service - Terminal UI for managing AWS services")]
+#[command(version = env!("CARGO_PKG_VERSION"))]
+struct Args {
+    #[arg(short = 'p', long = "profile", help = "AWS profile to use")]
+    profile: Option<String>,
+
+    #[arg(short = 'r', long = "region", help = "AWS region to use")]
+    region: Option<String>,
+}
+
 #[tokio::main]
 async fn main() -> Result<()> {
+    let args = Args::parse();
+
     // Setup terminal
     enable_raw_mode()?;
     let mut stdout = io::stdout();
@@ -32,11 +47,25 @@ async fn main() -> Result<()> {
     // Clear the terminal
     terminal.clear()?;
 
-    // Create app state
-    let mut app = App::new();
+    // Determine actual profile and region being used
+    let actual_profile = args
+        .profile
+        .clone()
+        .or_else(|| std::env::var("AWS_PROFILE").ok())
+        .unwrap_or_else(|| "default".to_string());
+
+    let actual_region = args
+        .region
+        .clone()
+        .or_else(|| std::env::var("AWS_REGION").ok())
+        .or_else(|| std::env::var("AWS_DEFAULT_REGION").ok())
+        .unwrap_or_else(|| "us-east-1".to_string());
+
+    // Create app state with actual AWS config
+    let mut app = App::new_with_aws_config(actual_profile, actual_region);
 
     // Create ECR client
-    let ecr_client = utils::aws::create_ecr_client().await?;
+    let ecr_client = utils::aws::create_ecr_client(args.profile, args.region).await?;
     let ecr_service = ECRService::new(ecr_client);
 
     // Initial data load

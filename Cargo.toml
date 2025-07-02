@@ -15,6 +15,7 @@ tokio = { version = "1.45", features = ["full"] }
 
 # AWS SDK - ECR only for now
 aws-config = "1.8"
+aws-types = "1.3"
 aws-sdk-ecr = "1.82"
 
 # Serialization and error handling
@@ -23,4 +24,5 @@ anyhow = "1.0"
 
 # Utilities
 chrono = { version = "0.4", features = ["serde"] }
+clap = { version = "4.5", features = ["derive"] }
 copypasta = "0.10.2"

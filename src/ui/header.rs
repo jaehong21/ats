@@ -9,7 +9,7 @@ use ratatui::{
 
 use crate::app::App;
 
-pub fn render_header(f: &mut Frame, area: Rect, _app: &App) {
+pub fn render_header(f: &mut Frame, area: Rect, app: &App) {
     let chunks = Layout::default()
         .direction(Direction::Horizontal)
         .constraints([
@@ -19,9 +19,9 @@ pub fn render_header(f: &mut Frame, area: Rect, _app: &App) {
         ])
         .split(area);
 
-    // Get AWS info
-    let profile = crate::utils::aws::get_current_profile();
-    let region = crate::utils::aws::get_current_region();
+    // Get AWS info from app state (includes CLI flags)
+    let profile = &app.aws_profile;
+    let region = &app.aws_region;
     let current_time = Local::now().format("%H:%M:%S").to_string();
 
     // Left side - Application info
@@ -36,10 +36,10 @@ pub fn render_header(f: &mut Frame, area: Rect, _app: &App) {
     // Right side - AWS info and time
     let aws_info = Paragraph::new(Line::from(vec![
         Span::styled("Profile: ", Style::default().fg(Color::Gray)),
-        Span::styled(&profile, Style::default().fg(Color::Green)),
+        Span::styled(profile, Style::default().fg(Color::Green)),
         Span::raw(" | "),
         Span::styled("Region: ", Style::default().fg(Color::Gray)),
-        Span::styled(&region, Style::default().fg(Color::Green)),
+        Span::styled(region, Style::default().fg(Color::Green)),
         Span::raw(" | "),
         Span::styled(&current_time, Style::default().fg(Color::Yellow)),
     ]))
