@@ -3,6 +3,11 @@ use copypasta::{ClipboardContext, ClipboardProvider};
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use std::time::Instant;
 
+use crate::services::{
+    manager::ServiceManager,
+    traits::{ViewState, ViewType},
+};
+
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum InputMode {
     Normal,
@@ -10,30 +15,21 @@ pub enum InputMode {
     Search,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq)]
-#[allow(clippy::upper_case_acronyms)]
-pub enum CurrentView {
-    ECR,
-    ECRImages,
-}
+// Removed hardcoded CurrentView enum - now using ViewState from services
 
 pub struct App {
     pub running: bool,
     pub input_mode: InputMode,
-    pub current_view: CurrentView,
+    pub current_view: Option<ViewState>,
     pub input_buffer: String,
-    pub search_filter: String,
-    pub selected_index: usize,
+    pub view_stack: Vec<ViewState>,
     pub last_refresh: Instant,
-    pub ecr_repositories: Vec<crate::services::ecr::ECRRepository>,
-    pub ecr_images: Vec<crate::services::ecr::ECRImage>,
-    pub current_repository: Option<String>,
-    pub view_stack: Vec<CurrentView>,
     pub loading: bool,
     pub error_message: Option<String>,
     pub copy_status: Option<(String, Instant)>, // (message, created_at timestamp)
     pub aws_profile: String,
     pub aws_region: String,
+    pub service_manager: ServiceManager,
 }
 
 impl Default for App {
@@ -41,20 +37,16 @@ impl Default for App {
         Self {
             running: true,
             input_mode: InputMode::Normal,
-            current_view: CurrentView::ECR,
+            current_view: None,
             input_buffer: String::new(),
-            search_filter: String::new(),
-            selected_index: 0,
-            last_refresh: Instant::now(),
-            ecr_repositories: Vec::new(),
-            ecr_images: Vec::new(),
-            current_repository: None,
             view_stack: Vec::new(),
+            last_refresh: Instant::now(),
             loading: false,
             error_message: None,
             copy_status: None,
             aws_profile: "default".to_string(),
             aws_region: "us-east-1".to_string(),
+            service_manager: ServiceManager::new(),
         }
     }
 }
@@ -101,17 +93,20 @@ impl App {
                 self.handle_escape_key();
             }
             (KeyCode::Up, _) | (KeyCode::Char('k'), KeyModifiers::NONE) => {
-                if self.selected_index > 0 {
-                    self.selected_index -= 1;
+                if let Some(view_state) = &mut self.current_view {
+                    if view_state.selected_index > 0 {
+                        view_state.selected_index -= 1;
+                    }
                 }
             }
             (KeyCode::Down, _) | (KeyCode::Char('j'), KeyModifiers::NONE) => {
-                let max_index = match self.current_view {
-                    CurrentView::ECR => self.filtered_repositories().len().saturating_sub(1),
-                    CurrentView::ECRImages => self.filtered_images().len().saturating_sub(1),
-                };
-                if self.selected_index < max_index {
-                    self.selected_index += 1;
+                if let Some(view_state) = &self.current_view {
+                    let max_index = self.get_filtered_data_count(view_state).saturating_sub(1);
+                    if let Some(current_view) = &mut self.current_view {
+                        if current_view.selected_index < max_index {
+                            current_view.selected_index += 1;
+                        }
+                    }
                 }
             }
             (KeyCode::Char('r'), KeyModifiers::NONE) => {
@@ -152,24 +147,32 @@ impl App {
             KeyCode::Esc => {
                 self.input_mode = InputMode::Normal;
                 self.input_buffer.clear();
-                self.search_filter.clear();
-                self.selected_index = 0;
+                if let Some(view_state) = &mut self.current_view {
+                    view_state.search_filter.clear();
+                    view_state.selected_index = 0;
+                }
             }
             KeyCode::Enter => {
                 self.input_mode = InputMode::Normal;
-                self.search_filter = self.input_buffer.clone();
+                if let Some(view_state) = &mut self.current_view {
+                    view_state.search_filter = self.input_buffer.clone();
+                    view_state.selected_index = 0;
+                }
                 self.input_buffer.clear();
-                self.selected_index = 0;
             }
             KeyCode::Char(c) => {
                 self.input_buffer.push(c);
-                self.search_filter = self.input_buffer.clone();
-                self.selected_index = 0;
+                if let Some(view_state) = &mut self.current_view {
+                    view_state.search_filter = self.input_buffer.clone();
+                    view_state.selected_index = 0;
+                }
             }
             KeyCode::Backspace => {
                 self.input_buffer.pop();
-                self.search_filter = self.input_buffer.clone();
-                self.selected_index = 0;
+                if let Some(view_state) = &mut self.current_view {
+                    view_state.search_filter = self.input_buffer.clone();
+                    view_state.selected_index = 0;
+                }
             }
             _ => {}
         }
@@ -179,15 +182,18 @@ impl App {
     fn execute_command(&mut self) -> Result<()> {
         match self.input_buffer.as_str() {
             "quit" | "q" => self.running = false,
-            "ecr" => {
-                self.current_view = CurrentView::ECR;
-                self.selected_index = 0;
-                self.refresh_data();
-            }
             "refresh" | "r" => {
                 self.refresh_data();
             }
-            _ => {}
+            command => {
+                // Try to find service by command
+                if let Some((service_id, _)) = self.service_manager.get_service_by_command(command)
+                {
+                    let view_state = ViewState::new(service_id.clone(), ViewType::List);
+                    self.current_view = Some(view_state);
+                    self.refresh_data();
+                }
+            }
         }
         Ok(())
     }
@@ -207,30 +213,25 @@ impl App {
         }
     }
 
-    pub fn filtered_repositories(&self) -> Vec<&crate::services::ecr::ECRRepository> {
-        if self.search_filter.is_empty() {
-            self.ecr_repositories.iter().collect()
-        } else {
-            self.ecr_repositories
-                .iter()
-                .filter(|repo| {
-                    repo.repository_name
-                        .to_lowercase()
-                        .contains(&self.search_filter.to_lowercase())
-                })
-                .collect()
+    pub fn get_filtered_data_count(&self, view_state: &ViewState) -> usize {
+        if let Some(service) = self.service_manager.get_service(&view_state.service_id) {
+            if let Some(data) = self
+                .service_manager
+                .get_service_data(&view_state.service_id)
+            {
+                return service.filter_data(data, &view_state.search_filter).len();
+            }
         }
+        0
     }
 
-    pub fn set_ecr_repositories(&mut self, repositories: Vec<crate::services::ecr::ECRRepository>) {
-        self.ecr_repositories = repositories;
-        self.loading = false;
-        self.error_message = None;
-
-        let max_index = self.filtered_repositories().len().saturating_sub(1);
-        if self.selected_index > max_index {
-            self.selected_index = max_index;
+    pub async fn load_current_service_data(&mut self) -> Result<()> {
+        if let Some(view_state) = &self.current_view {
+            self.service_manager
+                .load_service_data(&view_state.service_id, view_state)
+                .await?;
         }
+        Ok(())
     }
 
     pub fn set_error(&mut self, error: String) {
@@ -238,73 +239,45 @@ impl App {
         self.error_message = Some(error);
     }
 
-    fn handle_enter_key(&mut self) {
-        match self.current_view {
-            CurrentView::ECR => {
-                let repositories = self.filtered_repositories();
-                if self.selected_index < repositories.len() {
-                    let repo_name = repositories[self.selected_index].repository_name.clone();
-                    self.view_stack.push(self.current_view);
-                    self.current_view = CurrentView::ECRImages;
-                    self.current_repository = Some(repo_name);
-                    self.selected_index = 0;
-                    self.search_filter.clear();
-                    self.refresh_data();
-                }
+    pub fn finish_loading(&mut self) {
+        self.loading = false;
+        self.error_message = None;
+
+        // Reset selected index if it's out of bounds
+        let max_index = if let Some(view_state) = &self.current_view {
+            self.get_filtered_data_count(view_state).saturating_sub(1)
+        } else {
+            0
+        };
+
+        if let Some(view_state) = &mut self.current_view {
+            if view_state.selected_index > max_index {
+                view_state.selected_index = max_index;
             }
-            CurrentView::ECRImages => {
-                // Future: handle image drill-down
+        }
+    }
+
+    fn handle_enter_key(&mut self) {
+        if let Some(current_view) = &mut self.current_view {
+            if let Some(service) = self.service_manager.get_service(&current_view.service_id) {
+                if let Some(data) = self
+                    .service_manager
+                    .get_service_data(&current_view.service_id)
+                {
+                    if let Some(new_view) = service.handle_enter(current_view, data) {
+                        self.view_stack.push(current_view.clone());
+                        self.current_view = Some(new_view);
+                        self.refresh_data();
+                    }
+                }
             }
         }
     }
 
     fn handle_escape_key(&mut self) {
         if let Some(previous_view) = self.view_stack.pop() {
-            self.current_view = previous_view;
-            self.current_repository = None;
-            self.selected_index = 0;
-            self.search_filter.clear();
-        }
-    }
-
-    pub fn filtered_images(&self) -> Vec<&crate::services::ecr::ECRImage> {
-        if self.search_filter.is_empty() {
-            self.ecr_images.iter().collect()
-        } else {
-            self.ecr_images
-                .iter()
-                .filter(|image| {
-                    image
-                        .image_tag
-                        .as_ref()
-                        .map(|tag| {
-                            tag.to_lowercase()
-                                .contains(&self.search_filter.to_lowercase())
-                        })
-                        .unwrap_or(false)
-                })
-                .collect()
-        }
-    }
-
-    pub fn set_ecr_images(&mut self, mut images: Vec<crate::services::ecr::ECRImage>) {
-        // Sort images by pushed_at date, latest first
-        images.sort_by(|a, b| {
-            match (a.image_pushed_at, b.image_pushed_at) {
-                (Some(a_date), Some(b_date)) => b_date.cmp(&a_date), // Latest first
-                (Some(_), None) => std::cmp::Ordering::Less,         // Images with dates come first
-                (None, Some(_)) => std::cmp::Ordering::Greater, // Images without dates come last
-                (None, None) => std::cmp::Ordering::Equal,      // Both have no date
-            }
-        });
-
-        self.ecr_images = images;
-        self.loading = false;
-        self.error_message = None;
-
-        let max_index = self.filtered_images().len().saturating_sub(1);
-        if self.selected_index > max_index {
-            self.selected_index = max_index;
+            self.current_view = Some(previous_view);
+            self.refresh_data(); // Reload data for the previous view
         }
     }
 
@@ -314,70 +287,22 @@ impl App {
             Err(_) => return, // Silently fail if clipboard is not available
         };
 
-        let (content, display_name) = match self.current_view {
-            CurrentView::ECR => {
-                let repositories = self.filtered_repositories();
-                if self.selected_index < repositories.len() {
-                    let repo = &repositories[self.selected_index];
-                    let content = format!("{} for {}", repo.repository_uri, repo.repository_name);
-                    let display_name = repo.repository_name.clone();
-                    (content, display_name)
-                } else {
-                    return;
-                }
-            }
-            CurrentView::ECRImages => {
-                let images = self.filtered_images();
-                if self.selected_index < images.len() {
-                    let image = &images[self.selected_index];
-                    if let (Some(repo_name), Some(tag)) =
-                        (&self.current_repository, &image.image_tag)
+        if let Some(view_state) = &self.current_view {
+            if let Some(service) = self.service_manager.get_service(&view_state.service_id) {
+                if let Some(data) = self
+                    .service_manager
+                    .get_service_data(&view_state.service_id)
+                {
+                    if let Some((content, display_name)) =
+                        service.get_copy_content(view_state, data)
                     {
-                        let content = format!(
-                            "{}:{}",
-                            self.ecr_repositories
-                                .iter()
-                                .find(|r| r.repository_name == *repo_name)
-                                .map(|r| &r.repository_uri)
-                                .unwrap_or(&format!(
-                                    "unknown.dkr.ecr.region.amazonaws.com/{}",
-                                    repo_name
-                                )),
-                            tag
-                        );
-                        let display_name = format!("{}:{}", repo_name, tag);
-                        (content, display_name)
-                    } else if let Some(repo_name) = &self.current_repository {
-                        let content = format!(
-                            "{}@{}",
-                            self.ecr_repositories
-                                .iter()
-                                .find(|r| r.repository_name == *repo_name)
-                                .map(|r| &r.repository_uri)
-                                .unwrap_or(&format!(
-                                    "unknown.dkr.ecr.region.amazonaws.com/{}",
-                                    repo_name
-                                )),
-                            image.image_digest
-                        );
-                        let short_digest = if image.image_digest.len() > 36 {
-                            format!("{}...", &image.image_digest[..36])
-                        } else {
-                            image.image_digest.clone()
-                        };
-                        let display_name = format!("{}@{}", repo_name, short_digest);
-                        (content, display_name)
-                    } else {
-                        return;
+                        if ctx.set_contents(content).is_ok() {
+                            self.copy_status =
+                                Some((format!("✓ {} copied", display_name), Instant::now()));
+                        }
                     }
-                } else {
-                    return;
                 }
             }
-        };
-
-        if ctx.set_contents(content).is_ok() {
-            self.copy_status = Some((format!("✓ {} copied", display_name), Instant::now()));
         }
     }
 }

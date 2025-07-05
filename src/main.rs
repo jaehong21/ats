@@ -17,8 +17,12 @@ mod services;
 mod ui;
 mod utils;
 
-use app::{App, CurrentView};
-use services::ecr::ECRService;
+use app::App;
+use services::{
+    ecr::ECRService,
+    traits::{ServiceId, ViewState, ViewType},
+};
+use std::sync::Arc;
 use ui::layout::render_layout;
 
 #[derive(Parser)]
@@ -64,13 +68,25 @@ async fn main() -> Result<()> {
     // Create app state with actual AWS config
     let mut app = App::new_with_aws_config(actual_profile, actual_region);
 
-    // Create ECR client
+    // Create ECR client and service
     let ecr_client = utils::aws::create_ecr_client(args.profile, args.region).await?;
     let ecr_service = ECRService::new(ecr_client);
 
+    // Register ECR service
+    app.service_manager.register_service(Arc::new(ecr_service));
+
+    // Set initial view to ECR
+    let ecr_service_id = ServiceId::new("ecr");
+    let initial_view = ViewState::new(ecr_service_id, ViewType::List);
+    app.current_view = Some(initial_view);
+
     // Initial data load
     app.refresh_data();
-    load_ecr_data(&mut app, &ecr_service).await?;
+    if let Err(e) = app.load_current_service_data().await {
+        app.set_error(e.to_string());
+    } else {
+        app.finish_loading();
+    }
 
     // Main application loop
     let mut last_tick = Instant::now();
@@ -87,9 +103,10 @@ async fn main() -> Result<()> {
         // Auto-refresh data every 30 seconds or when requested
         if app.loading || last_tick.elapsed() >= Duration::from_secs(30) {
             if app.loading {
-                match app.current_view {
-                    CurrentView::ECR => load_ecr_data(&mut app, &ecr_service).await?,
-                    CurrentView::ECRImages => load_ecr_images_data(&mut app, &ecr_service).await?,
+                if let Err(e) = app.load_current_service_data().await {
+                    app.set_error(e.to_string());
+                } else {
+                    app.finish_loading();
                 }
             }
             last_tick = Instant::now();
@@ -114,36 +131,5 @@ async fn main() -> Result<()> {
     )?;
     terminal.show_cursor()?;
 
-    Ok(())
-}
-
-async fn load_ecr_data(app: &mut App, ecr_service: &ECRService) -> Result<()> {
-    match ecr_service.list_repositories().await {
-        Ok(repositories) => {
-            app.set_ecr_repositories(repositories);
-        }
-        Err(e) => {
-            // Store error in app state instead of printing to terminal
-            app.set_error(format!("Failed to load ECR repositories: {}", e));
-        }
-    }
-    Ok(())
-}
-
-async fn load_ecr_images_data(app: &mut App, ecr_service: &ECRService) -> Result<()> {
-    if let Some(repo_name) = &app.current_repository {
-        match ecr_service.get_repository_images(repo_name).await {
-            Ok(images) => {
-                app.set_ecr_images(images);
-            }
-            Err(e) => {
-                // Store error in app state instead of printing to terminal
-                app.set_error(format!(
-                    "Failed to load ECR images for {}: {}",
-                    repo_name, e
-                ));
-            }
-        }
-    }
     Ok(())
 }

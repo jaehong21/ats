@@ -51,17 +51,19 @@ ats/
 ├── CLAUDE.md            # Development documentation
 ├── src/
 │   ├── main.rs          # Application entry point and main loop
-│   ├── app.rs           # Core application state and logic
+│   ├── app.rs           # Core application state and logic (refactored)
 │   ├── ui/              # UI components
 │   │   ├── mod.rs       # UI module exports
 │   │   ├── layout.rs    # Main 4-panel layout management
 │   │   ├── header.rs    # Header with app info, profile, region
 │   │   ├── input.rs     # Dual-mode input bar (:command, /search)
-│   │   ├── content.rs   # Main content area with table rendering
+│   │   ├── content.rs   # Generic content renderer (refactored)
 │   │   └── footer.rs    # Status bar and hotkey hints
 │   ├── services/        # AWS service implementations
 │   │   ├── mod.rs       # Services module exports
-│   │   └── ecr.rs       # ECR service integration (implemented)
+│   │   ├── traits.rs    # Service framework traits and abstractions
+│   │   ├── manager.rs   # Service lifecycle and registry management
+│   │   └── ecr.rs       # ECR service plugin implementation
 │   └── utils/           # Utility functions
 │       ├── mod.rs       # Utils module exports
 │       └── aws.rs       # AWS SDK client creation and config
@@ -73,20 +75,36 @@ ats/
 **✅ Completed:**
 
 - Core TUI framework with 4-panel layout
-- ECR service integration with repository listing
-- Command mode (`:ecr`, `:quit`, `:refresh`)
+- **Service Framework Architecture** (major refactor completed):
+  - Generic `AwsService` trait for pluggable service implementations
+  - `ServiceManager` for service registration and lifecycle management
+  - `ResourceItem` trait with type-safe downcasting support
+  - Dynamic command routing based on registered services
+- ECR service integration with repository listing (now plugin-based)
+- ECR images drill-down with navigation back to repositories
+- Command mode (`:ecr`, `:quit`, `:refresh`) with dynamic service discovery
 - Search/filter mode (`/pattern`)
-- Keyboard navigation (arrows, Enter, Esc)
-- Error handling and loading states
+- Keyboard navigation (arrows, Enter, Esc) with proper back navigation
+- Enhanced error handling with AWS-specific error messages
 - AWS credential chain integration
 - Press `c` to copy selected resource's info to clipboard
 
-**🚧 Planned (WIP in documentation):**
+**🚧 Planned:**
 
-- Additional AWS services (EC2, Route53, ELB, S3, Lambda, CloudWatch)
+- Additional AWS services (Route53, EC2, ELB, S3, Lambda, CloudWatch)
+  - _Each new service only needs to implement the `AwsService` trait_
 - Help system (`:help`)
-- Resource detail drilling
 - Resource operations (start/stop, etc.)
+
+**📋 Architecture Benefits:**
+
+- **Plugin Architecture**: Adding new AWS services requires only implementing
+  `AwsService` trait
+- **Type Safety**: Generic framework with runtime type safety via downcasting
+- **Clean Separation**: Services are self-contained with their own rendering
+  logic
+- **Extensible**: Framework supports custom view types and service-specific
+  features
 
 ### Dependencies
 
@@ -110,6 +128,7 @@ while using `ratatui` framework.
 - `serde` - Serialization with derive features
 - `anyhow` - Error handling
 - `chrono` - Date/time handling with serde support
+- `async-trait` - Async traits support for service framework
 
 ### Testing Commands
 
@@ -155,3 +174,76 @@ cargo run -r us-west-2
 - **Consistency**: Similar to k9s command patterns
 - **Clarity**: Clear visual hierarchy and status indicators
 - **Performance**: Async operations with responsive UI
+- **Extensibility**: Plugin-based architecture for easy service addition
+- **Maintainability**: Clean separation between framework and service
+  implementations
+
+## Service Development Guide
+
+### Adding a New AWS Service
+
+To add a new AWS service (e.g., Route53), implement the `AwsService` trait:
+
+```rust
+pub struct Route53Service {
+    client: aws_sdk_route53::Client,
+}
+
+#[async_trait]
+impl AwsService for Route53Service {
+    fn metadata(&self) -> ServiceMetadata {
+        ServiceMetadata {
+            id: "route53".to_string(),
+            name: "Route 53".to_string(),
+            description: "AWS DNS service".to_string(),
+            command: "route53".to_string(),
+        }
+    }
+
+    async fn load_data(&self, view_state: &ViewState) -> Result<ResourceData> {
+        // Load Route53 hosted zones or records
+    }
+
+    fn render(&self, f: &mut Frame, area: Rect, app: &App, view_state: &ViewState, data: &ResourceData) {
+        // Render Route53-specific UI
+    }
+
+    // ... implement other required methods
+}
+```
+
+### Resource Types
+
+Each service resource must implement `ResourceItem`:
+
+```rust
+#[derive(Clone, Debug)]
+pub struct Route53HostedZone {
+    pub zone_id: String,
+    pub name: String,
+    // ... other fields
+}
+
+impl ResourceItem for Route53HostedZone {
+    fn id(&self) -> String { self.zone_id.clone() }
+    fn as_any(&self) -> &dyn Any { self }
+    fn clone_box(&self) -> Box<dyn ResourceItem> { Box::new(self.clone()) }
+}
+```
+
+### Registration
+
+Register the service in `main.rs`:
+
+```rust
+let route53_service = Route53Service::new(route53_client);
+app.service_manager.register_service(Arc::new(route53_service));
+```
+
+The framework automatically handles:
+
+- Command routing (`:route53`)
+- Data loading and caching
+- UI rendering dispatch
+- Navigation and filtering
+- Error handling and display

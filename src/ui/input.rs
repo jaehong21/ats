@@ -11,11 +11,24 @@ use crate::app::{App, InputMode};
 pub fn render_input(f: &mut Frame, area: Rect, app: &App) {
     let (prompt, content, mode_indicator) = match app.input_mode {
         InputMode::Normal => {
-            let current_service = match app.current_view {
-                crate::app::CurrentView::ECR => "ecr",
-                crate::app::CurrentView::ECRImages => "ecr/images",
+            let current_service = if let Some(view_state) = &app.current_view {
+                match view_state.view_type {
+                    crate::services::traits::ViewType::List => view_state.service_id.to_string(),
+                    crate::services::traits::ViewType::Detail => {
+                        if let Some(context) = &view_state.context {
+                            format!("{}/{}", view_state.service_id, context)
+                        } else {
+                            format!("{}/detail", view_state.service_id)
+                        }
+                    }
+                    crate::services::traits::ViewType::Custom(ref name) => {
+                        format!("{}/{}", view_state.service_id, name)
+                    }
+                }
+            } else {
+                "no service".to_string()
             };
-            ("> ", current_service.to_string(), "".to_string())
+            ("> ", current_service, "".to_string())
         }
         InputMode::Command => (":", app.input_buffer.clone(), "[:]".to_string()),
         InputMode::Search => ("/", app.input_buffer.clone(), "[/]".to_string()),
