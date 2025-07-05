@@ -32,8 +32,8 @@ pub struct App {
     pub service_manager: ServiceManager,
 }
 
-impl Default for App {
-    fn default() -> Self {
+impl App {
+    pub fn new(profile: String, region: String) -> Self {
         Self {
             running: true,
             input_mode: InputMode::Normal,
@@ -44,23 +44,10 @@ impl Default for App {
             loading: false,
             error_message: None,
             copy_status: None,
-            aws_profile: "default".to_string(),
-            aws_region: "us-east-1".to_string(),
+            aws_profile: profile,
+            aws_region: region,
             service_manager: ServiceManager::new(),
         }
-    }
-}
-
-impl App {
-    pub fn new() -> Self {
-        Self::default()
-    }
-
-    pub fn new_with_aws_config(profile: String, region: String) -> Self {
-        let mut app = Self::default();
-        app.aws_profile = profile;
-        app.aws_region = region;
-        app
     }
 
     pub fn handle_key_event(&mut self, key: KeyEvent) -> Result<()> {

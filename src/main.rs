@@ -66,7 +66,7 @@ async fn main() -> Result<()> {
         .unwrap_or_else(|| "us-east-1".to_string());
 
     // Create app state with actual AWS config
-    let mut app = App::new_with_aws_config(actual_profile, actual_region);
+    let mut app = App::new(actual_profile, actual_region);
 
     // Create ECR client and service
     let ecr_client = utils::aws::create_ecr_client(args.profile, args.region).await?;
